@@ -1,15 +1,10 @@
 use anyhow::Result;
-use candle_core::Device;
 use pico_args::Arguments;
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
-use test_project::{predict, T5ModelBuilder};
+use test_project::ProstT5;
 pub mod cnn;
-
-use candle_transformers::models::t5::T5EncoderModel;
-use test_project::cnn::CNN;
 
 #[cfg(feature = "tracing")]
 use tracing_chrome::ChromeLayerBuilder;
@@ -27,11 +22,7 @@ struct Args {
 fn process_fasta(
     input_path: &Path,
     output_path: &Path,
-    model: &mut T5EncoderModel,
-    cnn: &CNN,
-    hashmap: &HashMap<String, usize>,
-    device: &Device,
-    profile: bool,
+    prost: &mut ProstT5
 ) -> io::Result<()> {
     let file = File::open(input_path)?;
     let reader = io::BufReader::new(file);
@@ -46,127 +37,119 @@ fn process_fasta(
         .write(true)
         .truncate(true)
         .open("./times.fasta")?;
-    let mut buffer_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile_ss")?;
-    let mut index_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile_ss.index")?;
-    let mut dbtype_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile_ss.dbtype")?;
-    let mut buffer_file_seqs = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile")?;
-    let mut index_file_seqs = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile.index")?;
-    let mut dbtype_file_seqs = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile.dbtype")?;
-    let mut buffer_file_h = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile_h")?;
-    let mut index_file_h = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile_h.index")?;
-    let mut dbtype_file_h = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile_h.dbtype")?;
-    let mut lookup_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./profile.lookup")?;
-    let mut embeds_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("./embeds.txt")?;
+    // let mut buffer_file = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile_ss")?;
+    // let mut index_file = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile_ss.index")?;
+    // let mut dbtype_file = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile_ss.dbtype")?;
+    // let mut buffer_file_seqs = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile")?;
+    // let mut index_file_seqs = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile.index")?;
+    // let mut dbtype_file_seqs = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile.dbtype")?;
+    // let mut buffer_file_h = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile_h")?;
+    // let mut index_file_h = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile_h.index")?;
+    // let mut dbtype_file_h = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile_h.dbtype")?;
+    // let mut lookup_file = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./profile.lookup")?;
+    // let mut embeds_file = OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open("./embeds.txt")?;
 
-    let u8_vec_ss: Vec<u8> = vec![2, 0, 0, 0];
-    let u8_vec_aa: Vec<u8> = vec![0, 0, 0, 0];
-    let u8_vec_h: Vec<u8> = vec![12, 0, 0, 0];
-    dbtype_file.write(&u8_vec_ss)?;
-    dbtype_file_seqs.write(&u8_vec_aa)?;
-    dbtype_file_h.write(&u8_vec_h)?;
+    // let u8_vec_ss: Vec<u8> = vec![2, 0, 0, 0];
+    // let u8_vec_aa: Vec<u8> = vec![0, 0, 0, 0];
+    // let u8_vec_h: Vec<u8> = vec![12, 0, 0, 0];
+    // dbtype_file.write(&u8_vec_ss)?;
+    // dbtype_file_seqs.write(&u8_vec_aa)?;
+    // dbtype_file_h.write(&u8_vec_h)?;
     let mut s = String::new();
-    let mut index = 0;
-    let mut curr_len = 0;
-    let mut seq_len = 0;
-    let mut header_len = 0;
+    // let mut index = 0;
+    // let mut curr_len = 0;
+    // let mut seq_len = 0;
+    // let mut header_len = 0;
 
     for line in reader.lines() {
         let line = line?;
 
         if line.starts_with('>') {
-            let l = line.clone();
-
-            write!(buffer_file_h, "{}\n\0", &l[1..])?;
-            let index_content = format!("{}\t{}\t{}\n", index, header_len, l.len() + 1);
-            index_file_h.write(index_content.as_bytes())?;
-            header_len += (l.len() + 1) as i32;
-            let index_content = format!("{}\t{}\t{}\n", index, &l[1..], 0);
-            lookup_file.write(index_content.as_bytes())?;
+            // let l = line.clone();
+            // write!(buffer_file_h, "{}\n\0", &l[1..])?;
+            // let index_content = format!("{}\t{}\t{}\n", index, header_len, l.len() + 1);
+            // index_file_h.write(index_content.as_bytes())?;
+            // header_len += (l.len() + 1) as i32;
+            // let index_content = format!("{}\t{}\t{}\n", index, &l[1..], 0);
+            // lookup_file.write(index_content.as_bytes())?;
             if !s.is_empty() {
                 let start_time = std::time::Instant::now();
                 let prompt = s.clone();
-                let prediction = predict(
+                let prediction = prost.predict(
                     prompt,
-                    model,
-                    cnn,
-                    hashmap,
-                    device,
-                    profile,
-                    &mut buffer_file,
-                    &mut index_file,
-                    &mut buffer_file_seqs,
-                    &mut index_file_seqs,
-                    &mut embeds_file,
-                    index,
-                    curr_len,
-                    seq_len,
+                    // &mut buffer_file,
+                    // &mut index_file,
+                    // &mut buffer_file_seqs,
+                    // &mut index_file_seqs,
+                    // &mut embeds_file,
+                    // index,
+                    // curr_len,
+                    // seq_len,
                 );
-                let prediction = prediction.unwrap();
-                let res: Vec<String> = prediction.0;
+                let prediction = prediction.unwrap().0;
 
-                curr_len += prediction.1;
-                seq_len += (s.len() + 2) as i32;
+                // curr_len += prediction.1;
+                // seq_len += (s.len() + 2) as i32;
                 println!("Took {:?}", start_time.elapsed());
-                for mut value in res {
-                    value.pop();
-                    let _ = writeln!(output_file, "{}", value);
-                    let _ = writeln!(
-                        time_file,
-                        "{} : {}",
-                        s.len(),
-                        start_time.elapsed().as_secs() as f64
-                            + start_time.elapsed().subsec_nanos() as f64 * 1e-9
-                    );
+                unsafe {
+                    let _ = writeln!(output_file, "{}", std::str::from_utf8_unchecked(&prediction));
                 }
+                let _ = writeln!(
+                    time_file,
+                    "{} : {}",
+                    s.len(),
+                    start_time.elapsed().as_secs() as f64
+                        + start_time.elapsed().subsec_nanos() as f64 * 1e-9
+                );
                 s.clear();
             }
             writeln!(output_file, "{}", line)?;
         } else {
-            index += 1;
+            // index += 1;
             s.push_str(&line);
         }
     }
@@ -174,25 +157,20 @@ fn process_fasta(
     // Write the last sequence if not empty
     if !s.is_empty() {
         let prompt = s.clone();
-        let prediction = predict(
+        let prediction = prost.predict(
             prompt,
-            model,
-            cnn,
-            hashmap,
-            device,
-            profile,
-            &mut buffer_file,
-            &mut index_file,
-            &mut buffer_file_seqs,
-            &mut index_file_seqs,
-            &mut embeds_file,
-            index,
-            curr_len,
-            seq_len,
+            // &mut buffer_file,
+            // &mut index_file,
+            // &mut buffer_file_seqs,
+            // &mut index_file_seqs,
+            // &mut embeds_file,
+            // index,
+            // curr_len,
+            // seq_len,
         );
-        let res: Vec<String> = prediction.unwrap().0;
-        for value in &res {
-            let _ = writeln!(output_file, "{}", value);
+        let res = prediction.unwrap().0;
+        unsafe {
+            let _ = writeln!(output_file, "{}", std::str::from_utf8_unchecked(&res));
         }
     }
 
@@ -231,15 +209,8 @@ fn main() -> Result<()> {
         Some(guard)
     };
 
-    let builder = T5ModelBuilder::load("model/", args.cpu, !args.disable_cache)?;
-    let device = &builder.device;
+    let mut prost = ProstT5::load("model/".to_string(), args.generate_profile, args.cpu, !args.disable_cache)?;
 
-    let mut model = builder.build_encoder()?;
-    let cnn = if args.generate_profile {
-        builder.build_profile_cnn()?
-    } else {
-        builder.build_cnn()?
-    };
     match args.prompt {
         Some(prompt) => {
             let output = args.output.unwrap();
@@ -247,11 +218,7 @@ fn main() -> Result<()> {
             let _ = process_fasta(
                 Path::new(&prompt),
                 Path::new(&output),
-                &mut model,
-                &cnn,
-                &builder.tokens_map,
-                device,
-                args.generate_profile,
+                &mut prost,
             );
             println!("Took {:?}", start.elapsed());
         }
