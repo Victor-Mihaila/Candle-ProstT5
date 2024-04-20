@@ -13,7 +13,6 @@ use serde_json;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io:: Write;
-use std::path::Path;
 use std::path::PathBuf;
 
 pub mod cnn;
@@ -252,21 +251,23 @@ pub struct T5ModelBuilder {
 }
 
 impl T5ModelBuilder {
-    pub fn load(cpu: bool, cache: bool) -> Result<Self> {
+    pub fn load(base_path: &str, cpu: bool, cache: bool) -> Result<Self> {
         let device = device(cpu)?;
 
-        let config_filename = PathBuf::from("model/config.json");
-        let weights_filename = vec![PathBuf::from("model/model.safetensors")];
-        let path = PathBuf::from("model/cnn.safetensors");
-        let profile_path = PathBuf::from("model/new_cnn.safetensors");
-        //let cnn_filename = path;
+        let base = PathBuf::from(base_path);
+        let config_filename = base.join("config.json");
+
+        let weights_filename = vec![base.join("model.safetensors")];
+        let path = base.join("cnn.safetensors");
+        let profile_path = base.join("new_cnn.safetensors");
+
         let cnn_filename = vec![path];
         let profile_filename = vec![profile_path];
         let config = std::fs::read_to_string(config_filename)?;
         let mut config: t5::Config = serde_json::from_str(&config)?;
         config.use_cache = cache;
 
-        let tokens_filename = Path::new("model/tokens.json");
+        let tokens_filename = base.join("tokens.json");
         let tokens_config = std::fs::read_to_string(tokens_filename)?;
         let tokens_map: HashMap<String, usize> = serde_json::from_str(&tokens_config)?;
 

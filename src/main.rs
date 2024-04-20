@@ -225,7 +225,7 @@ fn main() -> Result<()> {
         Some(guard)
     };
 
-    let builder = T5ModelBuilder::load(args.cpu, !args.disable_cache)?;
+    let builder = T5ModelBuilder::load("model/", args.cpu, !args.disable_cache)?;
     let device = &builder.device;
 
     let mut model = builder.build_encoder()?;
