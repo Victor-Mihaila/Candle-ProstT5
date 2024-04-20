@@ -623,6 +623,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prostt5"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "pico-args",
+ "serde_json",
+ "tracing-chrome",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "pulp"
 version = "0.18.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -844,20 +858,6 @@ dependencies = [
  "libc",
  "thiserror",
  "walkdir",
-]
-
-[[package]]
-name = "test_project"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "pico-args",
- "serde_json",
- "tracing-chrome",
- "tracing-subscriber",
 ]
 
 [[package]]

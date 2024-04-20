@@ -3,7 +3,7 @@ use pico_args::Arguments;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
-use test_project::ProstT5;
+use prostt5::ProstT5;
 pub mod cnn;
 
 #[cfg(feature = "tracing")]
