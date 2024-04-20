@@ -10,7 +10,7 @@ anyhow = "1.0.81"
 candle-core = {git = "https://github.com/huggingface/candle.git", package = "candle-core"}
 candle-nn = {git = "https://github.com/huggingface/candle.git", package = "candle-nn"}
 candle-transformers = {git = "https://github.com/huggingface/candle.git", package = "candle-transformers"}
-clap = { version = "4.2.4", features = ["derive"] }
+pico-args = "=0.5.0"
 #cudarc = { version = "0.10.0", features = ["f16"] }
 serde_json = "1.0.115"
 tracing-chrome = "0.7.2"

@@ -15,7 +15,6 @@ use candle_nn::{
     Conv2d, Conv2dConfig, Module, VarBuilder,
 };
 use candle_transformers::models::t5::{self, T5EncoderModel};
-use clap::Parser;
 use serde_json;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -23,6 +22,7 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::path::PathBuf;
 // use tracing_subscriber::fmt::format;
+use pico_args::Arguments;
 
 pub fn device(cpu: bool) -> Result<Device> {
     if cpu {
@@ -51,29 +51,11 @@ const BIT_FACTOR: f32 = 8.0;
 const SCORE_BIAS: f32 = 0.0;
 const PROFILE_AA_SIZE: i32 = 20;
 
-#[derive(Parser, Debug, Clone)]
-#[command(author, version, about, long_about = None)]
 struct Args {
-    /// Run on CPU rather than on GPU.
-    #[arg(long)]
     cpu: bool,
-
-    /// Enable tracing (generates a trace-timestamp.json file).
-    #[arg(long)]
-    tracing: bool,
-
-    // Enable/disable decoding.
-    #[arg(long, default_value = "false")]
     disable_cache: bool,
-
-    /// Use this prompt, otherwise compute sentence similarities.
-    #[arg(long)]
     prompt: Option<String>,
-
-    #[arg(long, default_value = "false")]
     generate_profile: bool,
-
-    #[arg(long)]
     output: Option<String>,
 }
 
@@ -653,8 +635,23 @@ impl T5ModelBuilder {
 fn main() -> Result<()> {
     use tracing_chrome::ChromeLayerBuilder;
     use tracing_subscriber::prelude::*;
+    let mut args = Arguments::from_env();
 
-    let args = Args::parse();
+    // Convert the argument parsing to manually handle each option
+    let cpu = args.contains("--cpu");
+    let disable_cache = args.opt_value_from_str("--disable-cache").unwrap_or(Some(false)).unwrap_or(false);
+    let prompt = args.opt_value_from_str("--prompt").unwrap_or(None);
+    let generate_profile = args.opt_value_from_str("--generate-profile").unwrap_or(Some(false)).unwrap_or(false);
+    let output = args.opt_value_from_str("--output").unwrap_or(None);
+
+    // Construct Args
+    let args = Args {
+        cpu,
+        disable_cache,
+        prompt,
+        generate_profile,
+        output,
+    };
 
     let _guard = if args.tracing {
         let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
