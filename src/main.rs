@@ -63,7 +63,7 @@ fn predict(
     prompt: String,
     model: &mut T5EncoderModel,
     cnn: &CNN,
-    _profile_cnn: &CnnProfile,
+    _profile_cnn: &CNN,
     hashmap: &HashMap<String, usize>,
     device: &Device,
     profile: bool,
@@ -168,7 +168,7 @@ fn process_fasta(
     output_path: &Path,
     model: &mut T5EncoderModel,
     cnn: &CNN,
-    profile_cnn: &CnnProfile,
+    profile_cnn: &CNN,
     hashmap: &HashMap<String, usize>,
     device: &Device,
     profile: bool,
@@ -418,6 +418,7 @@ fn number_to_char(n: u32) -> char {
         _ => 'X', // Default case for numbers not in the list
     }
 }
+
 fn char_to_number(n: char) -> u8 {
     match n {
         'A' => 0,
@@ -477,16 +478,17 @@ pub struct CNN {
     // act: Activation,
     // dropout: Dropout,
     conv2: Conv2d,
+    profile: bool,
 }
 
 impl CNN {
-    pub fn load(vb: VarBuilder, config: Conv2dConfig) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: Conv2dConfig, profile: bool) -> Result<Self> {
         let conv1 = conv2d_non_square(1024, 32, 7, 1, config, vb.pp("classifier.0"))?;
         // let act = Activation::Relu;
         // let dropout = Dropout::new(0.0);
         let conv2 = conv2d_non_square(32, 20, 7, 1, config, vb.pp("classifier.3"))?;
         // Ok(Self { conv1, act, dropout, conv2 })
-        Ok(Self { conv1, conv2 })
+        Ok(Self { conv1, conv2, profile })
     }
 
     fn forward(&self, xs: &Tensor) -> Result<Tensor> {
@@ -506,48 +508,13 @@ impl CNN {
         let xs: Tensor = xs.clone();
         let xs: Tensor = xs.pad_with_zeros(2, 3, 3)?;
         let xs = self.conv2.forward(&xs)?.squeeze(D::Minus1)?;
-        Ok(xs)
-    }
-}
-
-pub struct CnnProfile {
-    conv1: Conv2d,
-    // act: Activation,
-    // dropout: Dropout,
-    conv2: Conv2d,
-}
-
-impl CnnProfile {
-    pub fn load(vb: VarBuilder, config: Conv2dConfig) -> Result<Self> {
-        let conv1 = conv2d_non_square(1024, 32, 7, 1, config, vb.pp("classifier.0"))?;
-        // let act = Activation::Relu;
-        // let dropout = Dropout::new(0.0);
-        let conv2 = conv2d_non_square(32, 20, 7, 1, config, vb.pp("classifier.3"))?;
-        // Ok(Self { conv1, act, dropout, conv2 })
-        Ok(Self { conv1, conv2 })
-    }
-
-    #[allow(dead_code)]
-    fn forward(&self, xs: &Tensor) -> Result<Tensor> {
-        //println!("input shape: {:?}", xs.shape());
-        let xs: Tensor = xs.permute((0, 2, 1))?.unsqueeze(D::Minus1)?;
-        //println!("input after permutation: ");
-        //println!("{xs}");
-        //println!("{:?}", xs.shape());
-        // println!("{:?}", xs.shape());
-        let xs: Tensor = xs.pad_with_zeros(2, 3, 3)?;
-        // println!("{:?}", xs.shape());
-        let xs: Tensor = self.conv1.forward(&xs)?;
-        // println!("{:?}", xs.shape());
-        // println!("{xs}");
-        //println!("{:?}", xs.shape());
-        let xs: Tensor = xs.relu()?;
-        let xs: Tensor = xs.clone();
-        let xs: Tensor = xs.pad_with_zeros(2, 3, 3)?;
-        let xs = self.conv2.forward(&xs)?.squeeze(D::Minus1)?;
-        let xs: Tensor = xs.permute((0, 2, 1))?;
-        let xs = log_softmax(&xs, D::Minus1)?;
-        Ok(xs)
+        if self.profile {
+            let xs: Tensor = xs.permute((0, 2, 1))?;
+            let xs = log_softmax(&xs, D::Minus1)?;
+            Ok(xs)
+        } else {
+            Ok(xs)
+        }
     }
 }
 
@@ -607,10 +574,10 @@ impl T5ModelBuilder {
             dilation: 1,
             groups: 1,
         };
-        Ok(CNN::load(vb, config)?)
+        Ok(CNN::load(vb, config, false)?)
     }
 
-    pub fn build_profile_cnn(&self) -> Result<CnnProfile> {
+    pub fn build_profile_cnn(&self) -> Result<CNN> {
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&self.profile_filename, DTYPE, &self.device)?
         };
@@ -621,7 +588,7 @@ impl T5ModelBuilder {
             dilation: 1,
             groups: 1,
         };
-        Ok(CnnProfile::load(vb, config)?)
+        Ok(CNN::load(vb, config, true)?)
     }
 
     // pub fn build_conditional_generation(&self) -> Result<t5::T5ForConditionalGeneration> {
