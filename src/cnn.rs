@@ -10,7 +10,7 @@ pub fn conv2d_non_square(
     kernel_size1: usize,
     kernel_size2: usize,
     cfg: Conv2dConfig,
-    vb: crate::VarBuilder,
+    vb: VarBuilder,
 ) -> Result<Conv2d> {
     let init_ws = candle_nn::init::DEFAULT_KAIMING_NORMAL;
     let ws = vb.get_with_hints(
