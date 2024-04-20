@@ -5,24 +5,25 @@ extern crate intel_mkl_src;
 extern crate accelerate_src;
 
 use anyhow::Result;
+use candle_core::{DType, Device, IndexOp, Tensor};
 use candle_core::utils::{cuda_is_available, metal_is_available};
-use candle_core::{DType, Device, IndexOp, Tensor, D};
-use candle_nn::{
-    ops::{log_softmax, softmax},
-    Conv2d, Conv2dConfig, Module, VarBuilder,
-};
+use candle_nn::{ ops::softmax, VarBuilder };
 use candle_transformers::models::t5::{self, T5EncoderModel};
+use pico_args::Arguments;
 use serde_json;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::path::PathBuf;
+
 #[cfg(feature = "tracing")]
 use tracing_chrome::ChromeLayerBuilder;
 #[cfg(feature = "tracing")]
 use tracing_subscriber::prelude::*;
-use pico_args::Arguments;
+
+pub mod cnn;
+use crate::cnn::CNN;
 
 pub fn device(cpu: bool) -> Result<Device> {
     if cpu {
@@ -63,7 +64,6 @@ fn predict(
     prompt: String,
     model: &mut T5EncoderModel,
     cnn: &CNN,
-    _profile_cnn: &CNN,
     hashmap: &HashMap<String, usize>,
     device: &Device,
     profile: bool,
@@ -102,9 +102,7 @@ fn predict(
     let ys = ys.i((.., 1..ys.dims3()?.1 - 1))?;
     let ys = ys.pad_with_zeros(1, 0, 1)?;
     let _ = writeln!(embeds_file, "{}", ys);
-    // println!("9");
     let output = &cnn.forward(&ys)?;
-    println!("{:?}", output.shape());
     let mut structures: Vec<String> = Vec::new();
 
     let vals = output.argmax_keepdim(1)?;
@@ -168,7 +166,6 @@ fn process_fasta(
     output_path: &Path,
     model: &mut T5EncoderModel,
     cnn: &CNN,
-    profile_cnn: &CNN,
     hashmap: &HashMap<String, usize>,
     device: &Device,
     profile: bool,
@@ -241,6 +238,7 @@ fn process_fasta(
         .write(true)
         .truncate(true)
         .open("./embeds.txt")?;
+
     let u8_vec_ss: Vec<u8> = vec![2, 0, 0, 0];
     let u8_vec_aa: Vec<u8> = vec![0, 0, 0, 0];
     let u8_vec_h: Vec<u8> = vec![12, 0, 0, 0];
@@ -272,7 +270,6 @@ fn process_fasta(
                     prompt,
                     model,
                     cnn,
-                    profile_cnn,
                     hashmap,
                     device,
                     profile,
@@ -318,7 +315,6 @@ fn process_fasta(
             prompt,
             model,
             cnn,
-            profile_cnn,
             hashmap,
             device,
             profile,
@@ -445,79 +441,6 @@ fn char_to_number(n: char) -> u8 {
     }
 }
 
-pub fn conv2d_non_square(
-    in_channels: usize,
-    out_channels: usize,
-    kernel_size1: usize,
-    kernel_size2: usize,
-    cfg: Conv2dConfig,
-    vb: crate::VarBuilder,
-) -> Result<Conv2d> {
-    let init_ws = candle_nn::init::DEFAULT_KAIMING_NORMAL;
-    let ws = vb.get_with_hints(
-        (
-            out_channels,
-            in_channels / cfg.groups,
-            kernel_size1,
-            kernel_size2,
-        ),
-        "weight",
-        init_ws,
-    )?;
-    let bound = 1. / (in_channels as f64).sqrt();
-    let init_bs = candle_nn::Init::Uniform {
-        lo: -bound,
-        up: bound,
-    };
-    let bs = vb.get_with_hints(out_channels, "bias", init_bs)?;
-    Ok(Conv2d::new(ws, Some(bs), cfg))
-}
-
-pub struct CNN {
-    conv1: Conv2d,
-    // act: Activation,
-    // dropout: Dropout,
-    conv2: Conv2d,
-    profile: bool,
-}
-
-impl CNN {
-    pub fn load(vb: VarBuilder, config: Conv2dConfig, profile: bool) -> Result<Self> {
-        let conv1 = conv2d_non_square(1024, 32, 7, 1, config, vb.pp("classifier.0"))?;
-        // let act = Activation::Relu;
-        // let dropout = Dropout::new(0.0);
-        let conv2 = conv2d_non_square(32, 20, 7, 1, config, vb.pp("classifier.3"))?;
-        // Ok(Self { conv1, act, dropout, conv2 })
-        Ok(Self { conv1, conv2, profile })
-    }
-
-    fn forward(&self, xs: &Tensor) -> Result<Tensor> {
-        //println!("input shape: {:?}", xs.shape());
-        let xs: Tensor = xs.permute((0, 2, 1))?.unsqueeze(D::Minus1)?;
-        //println!("input after permutation: ");
-        //println!("{xs}");
-        //println!("{:?}", xs.shape());
-        // println!("{:?}", xs.shape());
-        let xs: Tensor = xs.pad_with_zeros(2, 3, 3)?;
-        // println!("{:?}", xs.shape());
-        let xs: Tensor = self.conv1.forward(&xs)?;
-        // println!("{:?}", xs.shape());
-        // println!("{xs}");
-        //println!("{:?}", xs.shape());
-        let xs: Tensor = xs.relu()?;
-        let xs: Tensor = xs.clone();
-        let xs: Tensor = xs.pad_with_zeros(2, 3, 3)?;
-        let xs = self.conv2.forward(&xs)?.squeeze(D::Minus1)?;
-        if self.profile {
-            let xs: Tensor = xs.permute((0, 2, 1))?;
-            let xs = log_softmax(&xs, D::Minus1)?;
-            Ok(xs)
-        } else {
-            Ok(xs)
-        }
-    }
-}
-
 struct T5ModelBuilder {
     device: Device,
     config: t5::Config,
@@ -567,28 +490,14 @@ impl T5ModelBuilder {
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&self.cnn_filename, DTYPE, &self.device)?
         };
-        //println!("varbuilder initialized!");
-        let config = Conv2dConfig {
-            padding: 0,
-            stride: 1,
-            dilation: 1,
-            groups: 1,
-        };
-        Ok(CNN::load(vb, config, false)?)
+        Ok(CNN::load(vb, false)?)
     }
 
     pub fn build_profile_cnn(&self) -> Result<CNN> {
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&self.profile_filename, DTYPE, &self.device)?
         };
-        //println!("varbuilder initialized!");
-        let config = Conv2dConfig {
-            padding: 0,
-            stride: 1,
-            dilation: 1,
-            groups: 1,
-        };
-        Ok(CNN::load(vb, config, true)?)
+        Ok(CNN::load(vb, true)?)
     }
 }
 
@@ -622,8 +531,11 @@ fn main() -> Result<()> {
     let device = &builder.device;
 
     let mut model = builder.build_encoder()?;
-    let cnn: &CNN = &builder.build_cnn()?;
-    let profile_cnn = &builder.build_profile_cnn()?;
+    let cnn = if args.generate_profile {
+        builder.build_profile_cnn()?
+    } else {
+        builder.build_cnn()?
+    };
     match args.prompt {
         Some(prompt) => {
             let output = args.output.unwrap();
@@ -632,8 +544,7 @@ fn main() -> Result<()> {
                 Path::new(&prompt),
                 Path::new(&output),
                 &mut model,
-                cnn,
-                profile_cnn,
+                &cnn,
                 &builder.tokens_map,
                 device,
                 args.generate_profile,
