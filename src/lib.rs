@@ -5,14 +5,14 @@ extern crate intel_mkl_src;
 extern crate accelerate_src;
 
 use anyhow::Result;
-use candle_core::{DType, Device, IndexOp, Tensor};
 use candle_core::utils::{cuda_is_available, metal_is_available};
-use candle_nn::{ ops::softmax, VarBuilder };
+use candle_core::{DType, Device, IndexOp, Tensor};
+use candle_nn::{ops::softmax, VarBuilder};
 use candle_transformers::models::t5::{self, T5EncoderModel};
 use serde_json;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io:: Write;
+use std::io::Write;
 use std::path::PathBuf;
 
 pub mod cnn;
@@ -277,7 +277,7 @@ impl T5ModelBuilder {
             weights_filename,
             cnn_filename,
             profile_filename,
-            tokens_map
+            tokens_map,
         })
     }
 

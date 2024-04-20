@@ -1,6 +1,6 @@
 use anyhow::Result;
-use pico_args::Arguments;
 use candle_core::Device;
+use pico_args::Arguments;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
@@ -8,8 +8,8 @@ use std::path::Path;
 use test_project::{predict, T5ModelBuilder};
 pub mod cnn;
 
-use test_project::cnn::CNN;
 use candle_transformers::models::t5::T5EncoderModel;
+use test_project::cnn::CNN;
 
 #[cfg(feature = "tracing")]
 use tracing_chrome::ChromeLayerBuilder;
@@ -204,9 +204,15 @@ fn main() -> Result<()> {
 
     // Convert the argument parsing to manually handle each option
     let cpu = args.contains("--cpu");
-    let disable_cache = args.opt_value_from_str("--disable-cache").unwrap_or(Some(false)).unwrap_or(false);
+    let disable_cache = args
+        .opt_value_from_str("--disable-cache")
+        .unwrap_or(Some(false))
+        .unwrap_or(false);
     let prompt = args.opt_value_from_str("--prompt").unwrap_or(None);
-    let generate_profile = args.opt_value_from_str("--generate-profile").unwrap_or(Some(false)).unwrap_or(false);
+    let generate_profile = args
+        .opt_value_from_str("--generate-profile")
+        .unwrap_or(Some(false))
+        .unwrap_or(false);
     let output = args.opt_value_from_str("--output").unwrap_or(None);
 
     // Construct Args

@@ -1,8 +1,6 @@
 use anyhow::Result;
 use candle_core::{Tensor, D};
-use candle_nn::{
-    ops::log_softmax, Conv2d, Conv2dConfig, Module, VarBuilder,
-};
+use candle_nn::{ops::log_softmax, Conv2d, Conv2dConfig, Module, VarBuilder};
 
 pub fn conv2d_non_square(
     in_channels: usize,
@@ -54,7 +52,11 @@ impl CNN {
         // let dropout = Dropout::new(0.0);
         let conv2 = conv2d_non_square(32, 20, 7, 1, config, vb.pp("classifier.3"))?;
         // Ok(Self { conv1, act, dropout, conv2 })
-        Ok(Self { conv1, conv2, profile })
+        Ok(Self {
+            conv1,
+            conv2,
+            profile,
+        })
     }
 
     pub fn forward(&self, xs: &Tensor) -> Result<Tensor> {
