@@ -12,7 +12,6 @@ candle-nn = {git = "https://github.com/huggingface/candle.git", package = "candl
 candle-transformers = {git = "https://github.com/huggingface/candle.git", package = "candle-transformers"}
 clap = { version = "4.2.4", features = ["derive"] }
 #cudarc = { version = "0.10.0", features = ["f16"] }
-hf-hub = "0.3.2"
 serde_json = "1.0.115"
 tracing-chrome = "0.7.2"
 tracing-subscriber = "0.3.18"

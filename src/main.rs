@@ -16,11 +16,10 @@ use candle_nn::{
 };
 use candle_transformers::models::t5::{self, T5EncoderModel};
 use clap::Parser;
-use hf_hub::{api::sync::Api, Repo, RepoType};
 use serde_json;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::path::PathBuf;
 // use tracing_subscriber::fmt::format;
@@ -63,17 +62,6 @@ struct Args {
     #[arg(long)]
     tracing: bool,
 
-    /// The model repository to use on the HuggingFace hub.
-    #[arg(long)]
-    model_id: Option<String>,
-
-    #[arg(long)]
-    revision: Option<String>,
-
-    /// Enable decoding.
-    #[arg(long)]
-    decode: bool,
-
     // Enable/disable decoding.
     #[arg(long, default_value = "false")]
     disable_cache: bool,
@@ -81,30 +69,6 @@ struct Args {
     /// Use this prompt, otherwise compute sentence similarities.
     #[arg(long)]
     prompt: Option<String>,
-
-    /// If set along with --decode, will use this prompt to initialize the decoder.
-    #[arg(long)]
-    decoder_prompt: Option<String>,
-
-    /// L2 normalization for embeddings.
-    #[arg(long, default_value = "true")]
-    normalize_embeddings: bool,
-
-    /// The temperature used to generate samples.
-    #[arg(long, default_value_t = 0.8)]
-    temperature: f64,
-
-    /// Nucleus sampling probability cutoff.
-    #[arg(long)]
-    top_p: Option<f64>,
-
-    /// Penalty to be applied for repeating tokens, 1. means no penalty.
-    #[arg(long, default_value_t = 1.1)]
-    repeat_penalty: f32,
-
-    /// The context size to consider for the repeat penalty.
-    #[arg(long, default_value_t = 64)]
-    repeat_last_n: usize,
 
     #[arg(long, default_value = "false")]
     generate_profile: bool,
@@ -611,37 +575,17 @@ struct T5ModelBuilder {
     weights_filename: Vec<PathBuf>,
     cnn_filename: Vec<PathBuf>,
     profile_filename: Vec<PathBuf>,
+    tokens_map: HashMap<String, usize>,
 }
 
 impl T5ModelBuilder {
     pub fn load(args: &Args) -> Result<Self> {
         let device = device(args.cpu)?;
-        let default_model = "t5-small".to_string();
-        let default_revision = "refs/pr/15".to_string();
-        let (model_id, revision) = match (args.model_id.to_owned(), args.revision.to_owned()) {
-            (Some(model_id), Some(revision)) => (model_id, revision),
-            (Some(model_id), None) => (model_id, "main".to_string()),
-            (None, Some(revision)) => (default_model, revision),
-            (None, None) => (default_model, default_revision),
-        };
 
-        let repo = Repo::with_revision(model_id.clone(), RepoType::Model, revision);
-        let api = Api::new()?;
-        let api = api.repo(repo);
-        let config_filename = api.get("config.json")?;
-        println!("{:?}", config_filename);
-        //let tokenizer_filename = api.get("tokenizer.json")?;
-        // let weights_filename = if model_id == "google/flan-t5-xxl" || model_id == "google/flan-ul2"
-        // {
-        //     candle_examples::hub_load_safetensors(&api, "model.safetensors.index.json")?
-        // } else {
-        //     vec![api.get("model.safetensors")?]
-        // };
-        //println!("{:?}", weights_filename);
-        let weights_filename = vec![PathBuf::from("/home/victor/.cache/huggingface/hub/models--t5-small/snapshots/df1b051c49625cf57a3d0d8d3863ed4d13564fe4/model.safetensors")];
-        let path = PathBuf::from("../cnn.safetensors");
-        println!("{:?}", path);
-        let profile_path = PathBuf::from("../new_cnn.safetensors");
+        let config_filename = PathBuf::from("model/config.json");
+        let weights_filename = vec![PathBuf::from("model/model.safetensors")];
+        let path = PathBuf::from("model/cnn.safetensors");
+        let profile_path = PathBuf::from("model/new_cnn.safetensors");
         //let cnn_filename = path;
         let cnn_filename = vec![path];
         let profile_filename = vec![profile_path];
@@ -649,22 +593,24 @@ impl T5ModelBuilder {
         let mut config: t5::Config = serde_json::from_str(&config)?;
         config.use_cache = !args.disable_cache;
 
+        let tokens_filename = Path::new("model/tokens.json");
+        let tokens_config = std::fs::read_to_string(tokens_filename)?;
+        let tokens_map: HashMap<String, usize> = serde_json::from_str(&tokens_config)?;
+
         Ok(Self {
             device,
             config,
             weights_filename,
             cnn_filename,
             profile_filename,
+            tokens_map
         })
     }
 
     pub fn build_encoder(&self) -> Result<t5::T5EncoderModel> {
         let vb = unsafe {
-            //println!("3412423");
             VarBuilder::from_mmaped_safetensors(&self.weights_filename, DTYPE, &self.device)?
         };
-        println!("{:?}", vb.contains_tensor("shared.weight"));
-        //println!("3412423");
         Ok(t5::T5EncoderModel::load(vb, &self.config)?)
     }
 
@@ -718,22 +664,9 @@ fn main() -> Result<()> {
         None
     };
 
-    //println!("1");
     let builder = T5ModelBuilder::load(&args)?;
-    //println!("2");
     let device = &builder.device;
-    let path = Path::new("/home/victor/git/candle/candle-examples/examples/t5/tokens.json");
 
-    // Open the file in read-only mode
-    let mut file = File::open(&path).expect("file not found");
-
-    // Read the file content into a string
-    let mut data = String::new();
-    file.read_to_string(&mut data)
-        .expect("error reading the file");
-
-    // Deserialize the JSON string into a HashMap
-    let hashmap: HashMap<String, usize> = serde_json::from_str(&data)?;
     let mut model = builder.build_encoder()?;
     let cnn: &CNN = &builder.build_cnn()?;
     let profile_cnn = &builder.build_profile_cnn()?;
@@ -747,7 +680,7 @@ fn main() -> Result<()> {
                 &mut model,
                 cnn,
                 profile_cnn,
-                &hashmap,
+                &builder.tokens_map,
                 device,
                 args.generate_profile,
             );
