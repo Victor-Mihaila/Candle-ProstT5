@@ -21,7 +21,10 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::path::PathBuf;
-// use tracing_subscriber::fmt::format;
+#[cfg(feature = "tracing")]
+use tracing_chrome::ChromeLayerBuilder;
+#[cfg(feature = "tracing")]
+use tracing_subscriber::prelude::*;
 use pico_args::Arguments;
 
 pub fn device(cpu: bool) -> Result<Device> {
@@ -633,8 +636,6 @@ impl T5ModelBuilder {
 }
 
 fn main() -> Result<()> {
-    use tracing_chrome::ChromeLayerBuilder;
-    use tracing_subscriber::prelude::*;
     let mut args = Arguments::from_env();
 
     // Convert the argument parsing to manually handle each option
@@ -653,12 +654,11 @@ fn main() -> Result<()> {
         output,
     };
 
-    let _guard = if args.tracing {
+    #[cfg(feature = "tracing")]
+    let _guard = {
         let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
         tracing_subscriber::registry().with(chrome_layer).init();
         Some(guard)
-    } else {
-        None
     };
 
     let builder = T5ModelBuilder::load(&args)?;

@@ -13,8 +13,11 @@ candle-transformers = {git = "https://github.com/huggingface/candle.git", packag
 pico-args = "=0.5.0"
 #cudarc = { version = "0.10.0", features = ["f16"] }
 serde_json = "1.0.115"
-tracing-chrome = "0.7.2"
-tracing-subscriber = "0.3.18"
+tracing-chrome = { version = "0.7.2", optional = true }
+tracing-subscriber = { version = "0.3.18", optional = true }
+
+[features]
+tracing = ["tracing-chrome", "tracing-subscriber"]
 
 [profile.release-with-debug]
 inherits = "release"
