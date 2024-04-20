@@ -590,13 +590,6 @@ impl T5ModelBuilder {
         };
         Ok(CNN::load(vb, config, true)?)
     }
-
-    // pub fn build_conditional_generation(&self) -> Result<t5::T5ForConditionalGeneration> {
-    //     let vb = unsafe {
-    //         VarBuilder::from_mmaped_safetensors(&self.weights_filename, DTYPE, &self.device)?
-    //     };
-    //     Ok(t5::T5ForConditionalGeneration::load(vb, &self.config)?)
-    // }
 }
 
 fn main() -> Result<()> {
