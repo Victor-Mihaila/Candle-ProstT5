@@ -19,6 +19,9 @@ tracing-subscriber = { version = "0.3.18", optional = true }
 [features]
 tracing = ["tracing-chrome", "tracing-subscriber"]
 
+[patch.crates-io]
+fancy-regex = { path = "stub" }
+
 [profile.release-with-debug]
 inherits = "release"
 debug = true
