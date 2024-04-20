@@ -7,9 +7,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.81"
-candle-core = {git = "https://github.com/huggingface/candle.git", package = "candle-core"}
-candle-nn = {git = "https://github.com/huggingface/candle.git", package = "candle-nn"}
-candle-transformers = {git = "https://github.com/huggingface/candle.git", package = "candle-transformers"}
+candle-core = {git = "https://github.com/huggingface/candle.git", package = "candle-core", rev = "b45c710" }
+candle-nn = {git = "https://github.com/huggingface/candle.git", package = "candle-nn", rev = "b45c710" }
+candle-transformers = {git = "https://github.com/huggingface/candle.git", package = "candle-transformers", rev = "b45c710" }
 pico-args = "=0.5.0"
 serde_json = "1.0.115"
 tracing-chrome = { version = "0.7.2", optional = true }
