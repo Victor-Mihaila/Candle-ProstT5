@@ -7,31 +7,46 @@ extern crate accelerate_src;
 #[cfg(feature = "cuda")]
 extern crate cudarc;
 
-use std::path::PathBuf;
-use candle_transformers::models::t5::{self, T5EncoderModel};
-use anyhow::{Error as E, Result};
+use anyhow::Result;
 use candle_core::{DType, Device, Tensor, D, IndexOp};
-use candle_nn::{Module, VarBuilder, Conv2d, Conv2dConfig,  Activation, Dropout, ops::{softmax, log_softmax}};
-use candle_transformers::generation::LogitsProcessor;
-//use crate::models::model_utils::{Dropout, HiddenAct, Linear, HiddenActLayer, LayerNorm, PositionEmbeddingType};
-use clap::{Parser};
+use candle_core::utils::{cuda_is_available, metal_is_available};
+use candle_nn::{Module, VarBuilder, Conv2d, Conv2dConfig, ops::{softmax, log_softmax}};
+use candle_transformers::models::t5::{self, T5EncoderModel};
+use clap::Parser;
 use hf_hub::{api::sync::Api, Repo, RepoType};
-//use tokenizers::Tokenizer;
-
 use serde_json;
-use tracing_subscriber::fmt::format; 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write, Read};
 use std::path::Path;
-use std::process::exit;
-// use rust_tokenizers::tokenizer::{
-//     T5Tokenizer, Tokenizer, TruncationStrategy
-// };
+use std::path::PathBuf;
+// use tracing_subscriber::fmt::format; 
+
+pub fn device(cpu: bool) -> Result<Device> {
+    if cpu {
+        Ok(Device::Cpu)
+    } else if cuda_is_available() {
+        Ok(Device::new_cuda(0)?)
+    } else if metal_is_available() {
+        Ok(Device::new_metal(0)?)
+    } else {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            println!(
+                "Running on CPU, to run on GPU(metal), build this example with `--features metal`"
+            );
+        }
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        {
+            println!("Running on CPU, to run on GPU, build this example with `--features cuda`");
+        }
+        Ok(Device::Cpu)
+    }
+}
 
 const DTYPE: DType = DType::F16;
-const bitFactor: f32 = 8.0;
-const scoreBias: f32 = 0.0;
+const BIT_FACTOR: f32 = 8.0;
+const SCORE_BIAS: f32 = 0.0;
 const PROFILE_AA_SIZE: i32 = 20;
 
 #[derive(Parser, Debug, Clone)]
@@ -93,35 +108,9 @@ struct Args {
 
     #[arg(long)]
     output: Option<String>,
-
-
 }
 
-
-fn sort_fasta(input_path: &Path) -> Result<(Vec<(String, String, usize)>)>{
-    let file = File::open(input_path)?;
-    let reader = io::BufReader::new(file);
-    let mut seqs: Vec<(String,String,usize)> = Vec::new();
-    let mut seq: (String, String, usize) = (String::new(), String::new(), 0);
-    for line in reader.lines() {
-        let line = line?;
-        if line.starts_with('>') {
-            seq.0=line;
-        } else {
-            seq.1=line.clone();
-            seq.2=line.len();
-            seqs.push(seq);
-            seq= (String::new(), String::new(), 0);
-        }
-    }
-    seqs.sort_by(|a, b| a.2.cmp(&b.2));
-    seqs.reverse();
-    Ok(seqs)
-}
-
-
-fn predict(prompt: String, model: &mut T5EncoderModel, cnn: &CNN, profile_cnn: &CNN_profiles, hashmap:&HashMap<String,usize>, device: &Device, profile: bool, buffer_file: &mut File, index_file: &mut File, buffer_file_seqs: &mut File, index_file_seqs: &mut File, embeds_file: &mut File, index: i32, curr_len: i32, seq_len: i32) -> Result<(Vec<String>, i32)>{
-
+fn predict(prompt: String, model: &mut T5EncoderModel, cnn: &CNN, _profile_cnn: &CnnProfile, hashmap:&HashMap<String,usize>, device: &Device, profile: bool, buffer_file: &mut File, index_file: &mut File, buffer_file_seqs: &mut File, index_file_seqs: &mut File, embeds_file: &mut File, index: i32, curr_len: i32, seq_len: i32) -> Result<(Vec<String>, i32)>{
     let copy = &prompt;
     println!("{:?}", copy);
     // Replace each character in the string
@@ -150,7 +139,7 @@ fn predict(prompt: String, model: &mut T5EncoderModel, cnn: &CNN, profile_cnn: &
 
     let ys = ys.i((.., 1..ys.dims3()?.1-1))?;
     let ys = ys.pad_with_zeros(1, 0, 1)?;
-    writeln!(embeds_file, "{}", ys);
+    let _ = writeln!(embeds_file, "{}", ys);
     // println!("9");
     let output = &cnn.forward(&ys)?;
     println!("{:?}", output.shape());
@@ -165,7 +154,7 @@ fn predict(prompt: String, model: &mut T5EncoderModel, cnn: &CNN, profile_cnn: &
         println!("generating profile");
         //let output = &cnn.forward(&ys)?;
         let probs: Tensor = softmax(output, 1)?;
-        let mut lines: Vec<Vec<f32>> = probs.to_dtype(DType::F32)?.to_vec3()?[0].to_vec();
+        let lines: Vec<Vec<f32>> = probs.to_dtype(DType::F32)?.to_vec3()?[0].to_vec();
 
         let mut profile: Vec<f32> = Vec::new();
         for i in 0..lines[0].len(){
@@ -177,9 +166,8 @@ fn predict(prompt: String, model: &mut T5EncoderModel, cnn: &CNN, profile_cnn: &
         }
 
         
-        let mut consensus = structure.clone();
-
-        let mut pssm = compute_log_PSSM(profile, structure.len())?;
+        let consensus = structure.clone();
+        let mut pssm = compute_log_pssm(profile, structure.len())?;
         for pos in 0..consensus.len(){
             if consensus[pos]=='X'{
                 for aa in 0..PROFILE_AA_SIZE{
@@ -187,7 +175,7 @@ fn predict(prompt: String, model: &mut T5EncoderModel, cnn: &CNN, profile_cnn: &
                 }
             }
         }
-        let result = toBuffer(consensus, structure.len(), pssm)?;
+        let result = to_buffer(consensus, structure.len(), pssm)?;
     
         //buffer_file.write_all(result_as_u8)?;
         
@@ -218,10 +206,9 @@ fn predict(prompt: String, model: &mut T5EncoderModel, cnn: &CNN, profile_cnn: &
             
 }
 
-fn process_fasta(input_path: &Path, output_path: &Path, model: &mut T5EncoderModel, cnn: &CNN, profile_cnn: &CNN_profiles,   hashmap:&HashMap<String,usize>, device: &Device, profile: bool) -> io::Result<()> {
-    let mut file = File::open(input_path)?;
-
-    let mut reader = io::BufReader::new(file);
+fn process_fasta(input_path: &Path, output_path: &Path, model: &mut T5EncoderModel, cnn: &CNN, profile_cnn: &CnnProfile,   hashmap:&HashMap<String,usize>, device: &Device, profile: bool) -> io::Result<()> {
+    let file = File::open(input_path)?;
+    let reader = io::BufReader::new(file);
 
     let mut output_file = OpenOptions::new().create(true).write(true).truncate(true).open(output_path)?;
     let mut time_file = OpenOptions::new().create(true).write(true).truncate(true).open("./times.fasta")?;
@@ -263,17 +250,17 @@ fn process_fasta(input_path: &Path, output_path: &Path, model: &mut T5EncoderMod
             if !s.is_empty() {                 
                 let start_time = std::time::Instant::now();
                 let prompt = s.clone();
-                let mut prediction = predict(prompt, model, cnn, profile_cnn,  hashmap, device, profile, &mut buffer_file, &mut index_file,  &mut buffer_file_seqs, &mut index_file_seqs, &mut embeds_file, index, curr_len, seq_len);
+                let prediction = predict(prompt, model, cnn, profile_cnn,  hashmap, device, profile, &mut buffer_file, &mut index_file,  &mut buffer_file_seqs, &mut index_file_seqs, &mut embeds_file, index, curr_len, seq_len);
                 let prediction = prediction.unwrap();
-                let mut res: Vec<String> = prediction.0;
+                let res: Vec<String> = prediction.0;
                 
                 curr_len += prediction.1;
                 seq_len += (s.len() + 2) as i32;
                 println!("Took {:?}", start_time.elapsed());
                 for mut value in res{
                     value.pop();
-                    writeln!(output_file, "{}", value);
-                    writeln!(time_file, "{} : {}", s.len(), start_time.elapsed().as_secs() as f64 + start_time.elapsed().subsec_nanos() as f64 * 1e-9);
+                    let _ = writeln!(output_file, "{}", value);
+                    let _ = writeln!(time_file, "{} : {}", s.len(), start_time.elapsed().as_secs() as f64 + start_time.elapsed().subsec_nanos() as f64 * 1e-9);
                 }
                 s.clear();
                 
@@ -288,28 +275,29 @@ fn process_fasta(input_path: &Path, output_path: &Path, model: &mut T5EncoderMod
 
     // Write the last sequence if not empty
     if !s.is_empty() {
-        let prompt = s.clone();let mut prediction = predict(prompt, model, cnn, profile_cnn, hashmap, device, profile, &mut buffer_file, &mut index_file,  &mut buffer_file_seqs, &mut index_file_seqs, &mut embeds_file, index, curr_len, seq_len);
-        let mut res: Vec<String> = prediction.unwrap().0;
+        let prompt = s.clone();
+        let prediction = predict(prompt, model, cnn, profile_cnn, hashmap, device, profile, &mut buffer_file, &mut index_file,  &mut buffer_file_seqs, &mut index_file_seqs, &mut embeds_file, index, curr_len, seq_len);
+        let res: Vec<String> = prediction.unwrap().0;
         for value in &res{
-            writeln!(output_file, "{}", value);
+            let _ = writeln!(output_file, "{}", value);
         }
     }
 
     Ok(())
 }
 
-fn compute_log_PSSM(profile: Vec<f32>, queryLength: usize) -> Result<Vec<i8>>{
+fn compute_log_pssm(profile: Vec<f32>, query_length: usize) -> Result<Vec<i8>>{
    let pback: Vec<f32> = vec![0.0489372, 0.0306991, 0.101049, 0.0329671, 0.0276149, 0.0416262, 0.0452521, 0.030876, 0.0297251, 0.0607036, 0.0150238, 0.0215826, 0.0783843, 0.0512926, 0.0264886, 0.0610702, 0.0201311, 0.215998, 0.0310265, 0.0295417, 0.00001];
    //let pback: Vec<f32> = vec![0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.052, 0.00001];
-   let mut pssm: Vec<i8> = vec![0; queryLength * PROFILE_AA_SIZE as usize];
-   println!("{queryLength}");
+   let mut pssm: Vec<i8> = vec![0; query_length * PROFILE_AA_SIZE as usize];
+   println!("{query_length}");
    println!("{}", profile.len());
-   for pos in 0..queryLength{
+   for pos in 0..query_length{
     for aa in 0..PROFILE_AA_SIZE{
-        let aaProb: f32 = profile[pos * PROFILE_AA_SIZE as usize + aa as usize];
+        let aa_prob: f32 = profile[pos * PROFILE_AA_SIZE as usize + aa as usize];
         let idx: usize = pos  * PROFILE_AA_SIZE as usize+ aa as usize;
-        let logProb: f32 = (aaProb/pback[aa as usize]).log2();
-        let mut pssmval:f32 = logProb * bitFactor + bitFactor * scoreBias;
+        let log_prob: f32 = (aa_prob/pback[aa as usize]).log2();
+        let mut pssmval:f32 = log_prob * BIT_FACTOR + BIT_FACTOR * SCORE_BIAS;
         if pssmval < 0.0 {
             pssmval -= 0.5;
         } else {
@@ -327,7 +315,7 @@ fn compute_log_PSSM(profile: Vec<f32>, queryLength: usize) -> Result<Vec<i8>>{
    Ok(pssm)
 }
 
-fn toBuffer(consensus: Vec<char>, centerSequencelen: usize, pssm: Vec<i8>) -> Result<Vec<u8>>{
+fn to_buffer(consensus: Vec<char>, center_sequence_len: usize, pssm: Vec<i8>) -> Result<Vec<u8>>{
     let pssm_u8 = unsafe { 
         std::slice::from_raw_parts(pssm.as_ptr() as *const u8, pssm.len())
     };
@@ -335,7 +323,7 @@ fn toBuffer(consensus: Vec<char>, centerSequencelen: usize, pssm: Vec<i8>) -> Re
     //     print!("{prob}\n");
     // }
     let mut result: Vec<u8> = Vec::new();
-    for pos in 0..centerSequencelen-1{
+    for pos in 0..center_sequence_len-1{
         for aa in 0..PROFILE_AA_SIZE{
             result.push(pssm_u8[pos*PROFILE_AA_SIZE as usize + aa as usize]);
         }
@@ -399,6 +387,7 @@ fn char_to_number(n: char) -> u8 {
         _ => 20, // Default case for numbers not in the list
     }
 }
+
 pub fn conv2d_non_square(
     in_channels: usize,
     out_channels: usize,
@@ -429,18 +418,19 @@ pub fn conv2d_non_square(
 
 pub struct CNN{
     conv1: Conv2d,
-    act: Activation,
-    dropout: Dropout,
+    // act: Activation,
+    // dropout: Dropout,
     conv2: Conv2d
 }
 
 impl CNN{
     pub fn load(vb: VarBuilder, config: Conv2dConfig) -> Result<Self>{
         let conv1 = conv2d_non_square(1024, 32, 7, 1, config, vb.pp("classifier.0"))?;
-        let act = Activation::Relu;
-        let dropout = Dropout::new(0.0);
+        // let act = Activation::Relu;
+        // let dropout = Dropout::new(0.0);
         let conv2 = conv2d_non_square(32, 20, 7, 1, config, vb.pp("classifier.3"))?;
-        Ok(Self { conv1, act, dropout, conv2 })
+        // Ok(Self { conv1, act, dropout, conv2 })
+        Ok(Self { conv1, conv2 })
     }
 
     fn forward(&self, xs: &Tensor) -> Result<Tensor> {
@@ -464,22 +454,24 @@ impl CNN{
     }
 }
 
-pub struct CNN_profiles{
+pub struct CnnProfile {
     conv1: Conv2d,
-    act: Activation,
-    dropout: Dropout,
+    // act: Activation,
+    // dropout: Dropout,
     conv2: Conv2d
 }
 
-impl CNN_profiles{
+impl CnnProfile {
     pub fn load(vb: VarBuilder, config: Conv2dConfig) -> Result<Self>{
         let conv1 = conv2d_non_square(1024, 32, 7, 1, config, vb.pp("classifier.0"))?;
-        let act = Activation::Relu;
-        let dropout = Dropout::new(0.0);
+        // let act = Activation::Relu;
+        // let dropout = Dropout::new(0.0);
         let conv2 = conv2d_non_square(32, 20, 7, 1, config, vb.pp("classifier.3"))?;
-        Ok(Self { conv1, act, dropout, conv2 })
+        // Ok(Self { conv1, act, dropout, conv2 })
+        Ok(Self { conv1, conv2 })
     }
 
+    #[allow(dead_code)]
     fn forward(&self, xs: &Tensor) -> Result<Tensor> {
         //println!("input shape: {:?}", xs.shape());
         let xs: Tensor = xs.permute((0, 2, 1))?.unsqueeze(D::Minus1)?;
@@ -513,7 +505,7 @@ struct T5ModelBuilder {
 
 impl T5ModelBuilder {
     pub fn load(args: &Args) -> Result<Self> {
-        let device = candle_examples::device(args.cpu)?;
+        let device = device(args.cpu)?;
         let default_model = "t5-small".to_string();
         let default_revision = "refs/pr/15".to_string();
         let (model_id, revision) = match (args.model_id.to_owned(), args.revision.to_owned()) {
@@ -537,9 +529,9 @@ impl T5ModelBuilder {
         // };
         //println!("{:?}", weights_filename);
         let weights_filename = vec![PathBuf::from("/home/victor/.cache/huggingface/hub/models--t5-small/snapshots/df1b051c49625cf57a3d0d8d3863ed4d13564fe4/model.safetensors")];
-        let mut path = PathBuf::from("../cnn.safetensors");
+        let path = PathBuf::from("../cnn.safetensors");
         println!("{:?}", path);
-        let mut profile_path = PathBuf::from("../new_cnn.safetensors");
+        let profile_path = PathBuf::from("../new_cnn.safetensors");
         //let cnn_filename = path;
         let cnn_filename = vec![path];
         let profile_filename = vec![profile_path];
@@ -567,7 +559,8 @@ impl T5ModelBuilder {
         //println!("3412423");
         Ok(t5::T5EncoderModel::load(vb, &self.config)?)
     }
-    pub fn build_CNN(&self) -> Result<CNN> {
+
+    pub fn build_cnn(&self) -> Result<CNN> {
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&self.cnn_filename, DTYPE, &self.device)?
         };
@@ -580,7 +573,8 @@ impl T5ModelBuilder {
         };
         Ok(CNN::load(vb,config)?)
     }
-    pub fn build_profile_CNN(&self) -> Result<CNN_profiles> {
+
+    pub fn build_profile_cnn(&self) -> Result<CnnProfile> {
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&self.profile_filename, DTYPE, &self.device)?
         };
@@ -591,15 +585,15 @@ impl T5ModelBuilder {
             dilation: 1,
             groups: 1,
         };
-        Ok(CNN_profiles::load(vb,config)?)
+        Ok(CnnProfile::load(vb,config)?)
     }
 
-    pub fn build_conditional_generation(&self) -> Result<t5::T5ForConditionalGeneration> {
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&self.weights_filename, DTYPE, &self.device)?
-        };
-        Ok(t5::T5ForConditionalGeneration::load(vb, &self.config)?)
-    }
+    // pub fn build_conditional_generation(&self) -> Result<t5::T5ForConditionalGeneration> {
+    //     let vb = unsafe {
+    //         VarBuilder::from_mmaped_safetensors(&self.weights_filename, DTYPE, &self.device)?
+    //     };
+    //     Ok(t5::T5ForConditionalGeneration::load(vb, &self.config)?)
+    // }
 }
 
 fn main() -> Result<()> {
@@ -632,15 +626,13 @@ fn main() -> Result<()> {
     // Deserialize the JSON string into a HashMap
     let hashmap: HashMap<String, usize> = serde_json::from_str(&data)?;
     let mut model = builder.build_encoder()?;
-    let cnn: &CNN = &builder.build_CNN()?;
-    let profile_cnn = &builder.build_profile_CNN()?;
-    let max_batch = 500; 
-    let max_residues = 4000;
+    let cnn: &CNN = &builder.build_cnn()?;
+    let profile_cnn = &builder.build_profile_cnn()?;
     match args.prompt {
         Some(prompt) => {
             let output = args.output.unwrap();
             let start = std::time::Instant::now();
-            process_fasta(Path::new(&prompt), Path::new(&output), &mut model, cnn, profile_cnn, &hashmap, device, args.generate_profile);
+            let _ = process_fasta(Path::new(&prompt), Path::new(&output), &mut model, cnn, profile_cnn, &hashmap, device, args.generate_profile);
             println!("Took {:?}", start.elapsed());
             //println!("finished");
             //let res = predict(prompt, &builder, &hashmap, device)?;
@@ -650,8 +642,4 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
-}
-
-pub fn normalize_l2(v: &Tensor) -> Result<Tensor> {
-    Ok(v.broadcast_div(&v.sqr()?.sum_keepdim(1)?.sqrt()?)?)
 }
