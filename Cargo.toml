@@ -32,8 +32,6 @@ metal = [
     "candle-transformers/metal",
 ]
 
-[patch.crates-io]
-fancy-regex = { path = "stub" }
 
 [profile.release-with-debug]
 inherits = "release"
