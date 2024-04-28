@@ -4,7 +4,6 @@
 
 pub mod prelude {
     pub use super::*;
-    pub use itertools::Itertools;
 }
 
 use std::ops::Range;
