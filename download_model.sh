@@ -36,7 +36,7 @@ downloadFile() {
 
 
 if [ ! -f "model/model.safetensors" ]; then
-    downloadFile https://foldseek.steineggerlab.workers.dev/prostt5-safetensors.tar.gz "model.tar.gz"
+    downloadFile https://foldseek.steineggerlab.workers.dev/prostt5-f16-safetensors.tar.gz "model.tar.gz"
     tar -xzvf model.tar.gz
     rm -f model.tar.gz
 fi
