@@ -1,5 +1,0 @@
-[patch.crates-io]
-fancy-regex = { path = "./fancy_regex" }
-tracing = { path = "./tracing" }
-rayon = { path = "./rayon" }
-num_cpus = { path = "./num_cpus" }

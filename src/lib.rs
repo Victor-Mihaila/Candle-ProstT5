@@ -18,8 +18,6 @@ use std::path::PathBuf;
 pub mod cnn;
 use crate::cnn::CNN;
 
-pub mod ffi;
-
 pub fn device(cpu: bool) -> Result<Device> {
     if cpu {
         Ok(Device::Cpu)
