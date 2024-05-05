@@ -1,6 +1,6 @@
 //! Shim for single-threaded rayon replacement
 //! based on https://github.com/kornelski/dssim/blob/main/dssim-core/src/lieon.rs
-//! Licensed under CC0 and/or AGPLv3
+//! Licensed under CC0 and/or AGPLv3 (https://github.com/kornelski/dssim/issues/159)
 
 pub mod prelude {
     pub use super::*;
