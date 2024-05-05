@@ -43,6 +43,7 @@ impl<T: Iterator> ParIterator for T {
 }
 
 pub trait ParSliceLie<T> {
+    fn par_chunks_exact(&self, n: usize) -> std::slice::ChunksExact<'_, T>;
     fn par_chunks(&self, n: usize) -> std::slice::Chunks<'_, T>;
 }
 
@@ -68,12 +69,20 @@ pub fn join<A, B>(a: impl FnOnce() -> A, b: impl FnOnce() -> B) -> (A, B) {
 }
 
 impl<'a, T> ParSliceLie<T> for &'a [T] {
+    fn par_chunks_exact(&self, n: usize) -> std::slice::ChunksExact<'_, T> {
+        self.chunks_exact(n)
+    }
+
     fn par_chunks(&self, n: usize) -> std::slice::Chunks<'_, T> {
         self.chunks(n)
     }
 }
 
 impl<'a, T> ParSliceLie<T> for &'a mut [T] {
+    fn par_chunks_exact(&self, n: usize) -> std::slice::ChunksExact<'_, T> {
+        self.chunks_exact(n)
+    }
+
     fn par_chunks(&self, n: usize) -> std::slice::Chunks<'_, T> {
         self.chunks(n)
     }
